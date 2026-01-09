@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>流光 (Flowing Light) - Multilingual Edition</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* --- 基础设置 --- */
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #0f172a;
+            font-family: 'Segoe UI', 'Helvetica Neue', sans-serif;
+            user-select: none;
+        }
+
+        /* 游戏进行时隐藏鼠标 */
+        body.game-active {
+            cursor: none;
+        }
+
+        #game-world {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            background: linear-gradient(to bottom, #0b1026 0%, #1e255e 100%);
+        }
+
+        /* --- 画布层级 --- */
+        #bg-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; opacity: 0.6; }
+        #trail-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 5; pointer-events: none; }
+        #particle-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 12; pointer-events: none; }
+
+        /* --- 玩家飞机 --- */
+        #player {
+            position: absolute;
+            width: 48px;
+            height: 48px;
+            transform: translate(-50%, -50%);
+            z-index: 10;
+            will-change: transform; 
+            transition: filter 0.3s;
+        }
+
+        .plane-svg {
+            width: 100%;
+            height: 100%;
+            fill: white;
+            filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.8));
+            transition: fill 0.5s; 
+        }
+
+        /* 增幅光环 (Halo) */
+        #player-halo {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0px;
+            height: 0px;
+            transform: translate(-50%, -50%);
+            border-radius: 50%;
+            border: 2px solid rgba(255, 255, 255, 0.6);
+            background: radial-gradient(circle, rgba(34, 211, 238, 0.1) 0%, rgba(34, 211, 238, 0) 70%);
+            opacity: 0;
+            pointer-events: none;
+            z-index: -1;
+            box-shadow: 0 0 30px rgba(34, 211, 238, 0.3);
+            transition: opacity 0.3s;
+        }
+        
+        #player.halo-active #player-halo {
+            opacity: 1;
+            border-color: rgba(165, 243, 252, 0.8);
+            animation: haloSpin 10s linear infinite;
+        }
+
+        @keyframes haloSpin { from { transform: translate(-50%, -50%) rotate(0deg); } to { transform: translate(-50%, -50%) rotate(360deg); } }
+
+        /* --- 实体样式 --- */
+        .orb {
+            position: absolute;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 8;
+        }
+        
+        .orb-buff {
+            width: 24px;
+            height: 24px;
+            background: #fff;
+            box-shadow: 0 0 20px #fff;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .orb-buff::after {
+            content: '';
+            position: absolute;
+            width: 160%;
+            height: 160%;
+            border: 2px dashed rgba(255,255,255,0.8);
+            border-radius: 50%;
+            animation: spin 4s linear infinite;
+        }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+
+        .traveler {
+            position: absolute;
+            width: 70px;
+            height: 70px;
+            border-radius: 50%;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 7;
+        }
+        .traveler-core {
+            width: 14px;
+            height: 14px;
+            background: white;
+            border-radius: 50%;
+            box-shadow: 0 0 25px white;
+        }
+
+        /* --- UI 层 --- */
+        #hud { position: absolute; top: 0; left: 0; width: 100%; padding: 24px 40px; z-index: 50; display: flex; justify-content: space-between; pointer-events: none; }
+        .hud-text { color: rgba(255,255,255,0.8); font-size: 14px; letter-spacing: 2px; font-weight: 300; }
+        
+        #progress-bar-wrapper { position: absolute; top: 0; left: 0; width: 100%; height: 4px; background: rgba(255,255,255,0.1); z-index: 51; }
+        #progress-fill { height: 100%; width: 0%; background: #ffffff; box-shadow: 0 0 10px rgba(255,255,255, 0.5); transition: width 0.1s linear; }
+
+        #narrative-display { position: absolute; top: 30%; width: 100%; text-align: center; z-index: 40; pointer-events: none; }
+        .narrative-text { font-size: 28px; font-weight: 200; letter-spacing: 6px; color: rgba(255, 255, 255, 0.95); text-shadow: 0 4px 20px rgba(0,0,0,0.5); opacity: 0; transform: translateY(15px); transition: all 1s ease-out; }
+        .narrative-text.active { opacity: 1; transform: translateY(0); }
+
+        /* --- 遮罩层 --- */
+        #overlay-layer { position: absolute; inset: 0; z-index: 100; background: rgba(11, 16, 38, 0.9); backdrop-filter: blur(10px); display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; transition: opacity 0.8s; }
+        
+        .breath-guide { position: relative; width: 140px; height: 140px; display: none; justify-content: center; align-items: center; margin-bottom: 30px; }
+        .breath-circle { position: absolute; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.3); width: 100%; height: 100%; animation: breathAnim 6s infinite ease-in-out; }
+        .breath-text { position: absolute; font-size: 16px; letter-spacing: 4px; opacity: 0.8; animation: textFade 6s infinite ease-in-out; }
+        @keyframes breathAnim { 0%, 100% { transform: scale(1); opacity: 0.3; } 50% { transform: scale(1.4); opacity: 0.8; } }
+        @keyframes textFade { 0%, 100% { content: var(--breath-in); opacity: 0.3; } 45% { opacity: 1; } 50% { opacity: 1; } }
+
+        .btn-start { margin-top: 20px; padding: 14px 48px; border: 1px solid rgba(255,255,255,0.2); border-radius: 99px; background: rgba(255,255,255,0.05); color: white; font-size: 14px; letter-spacing: 3px; transition: all 0.4s; cursor: pointer; }
+        .btn-start:hover { background: white; color: #0b1026; transform: scale(1.05); }
+
+        /* 语言切换按钮 */
+        .lang-switch { position: absolute; top: 24px; right: 40px; color: rgba(255,255,255,0.6); font-size: 12px; cursor: pointer; border: 1px solid rgba(255,255,255,0.2); padding: 4px 12px; border-radius: 20px; transition: all 0.3s; z-index: 101; letter-spacing: 1px; }
+        .lang-switch:hover { color: white; border-color: rgba(255,255,255,0.6); }
+
+        #input-video { display: none; transform: scaleX(-1); }
+        .hidden { display: none !important; }
+        .opacity-0 { opacity: 0; pointer-events: none; }
+        .fade-out { opacity: 0; pointer-events: none; }
+    </style>
+</head>
+<body>
+
+    <video id="input-video" playsinline></video>
+
+    <!-- 进度条 -->
+    <div id="progress-bar-wrapper">
+        <div id="progress-fill"></div>
+    </div>
+
+    <!-- 游戏内 HUD -->
+    <div id="hud" class="hidden">
+        <span class="hud-text" id="status-text">JOURNEY</span>
+        <span class="hud-text" id="score-text">LUMENS: 0</span>
+    </div>
+
+    <!-- 游戏世界 -->
+    <div id="game-world">
+        <canvas id="bg-canvas"></canvas>
+        <canvas id="trail-canvas"></canvas>
+        <canvas id="particle-canvas"></canvas>
+        
+        <div id="player">
+            <svg class="plane-svg" viewBox="0 0 24 24">
+                <path d="M12 2L2 22L12 18L22 22L12 2Z" stroke-linejoin="round" />
+            </svg>
+            <div id="player-halo"></div>
+        </div>
+    </div>
+
+    <div id="narrative-display">
+        <div id="narrative-text" class="narrative-text"></div>
+    </div>
+
+    <!-- 遮罩层 (Start / Rest) -->
+    <div id="overlay-layer">
+        <!-- 语言切换 -->
+        <div class="lang-switch" id="lang-btn">EN / 中</div>
+
+        <!-- 呼吸指示 (休息用) -->
+        <div class="breath-guide" id="breath-guide">
+            <div class="breath-circle"></div>
+            <div class="breath-text" id="breath-word"></div>
+        </div>
+        
+        <h1 id="overlay-title" class="text-5xl font-thin mb-2 tracking-[0.2em] text-white drop-shadow-lg">流 光</h1>
+        <p id="overlay-subtitle" class="text-sm opacity-50 mb-4 font-light tracking-widest uppercase">Deep Connection</p>
+        
+        <!-- 玩法指引 -->
+        <div id="intro-guide" class="flex flex-col items-center gap-4 mb-6 mt-2 opacity-0 transition-opacity duration-1000">
+            <div class="w-12 h-12 rounded-full border border-white/20 flex items-center justify-center mb-2 animate-pulse">
+                <svg class="w-5 h-5 text-white/80" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            </div>
+            <div class="text-center space-y-3">
+                <p id="intro-title" class="text-lg text-cyan-100 font-light tracking-widest">放松双肩 · 深呼吸</p>
+                <div class="text-sm text-white/60 font-light space-y-1.5 leading-relaxed tracking-wider">
+                    <p id="intro-1">请以鼻尖为笔，轻抚微风</p>
+                    <p id="intro-2">大幅度缓慢摆动头部</p>
+                    <p id="intro-3">感受颈部每一次温柔的舒展</p>
+                </div>
+            </div>
+        </div>
+
+        <div id="loading-text" class="text-xs tracking-widest animate-pulse text-cyan-200 mt-4">正在链接视觉神经...</div>
+        <button id="start-btn" class="hidden btn-start">起 飞</button>
+    </div>
+
+    <script>
+        /**
+         * JENOVA'S FINAL POLISH (v4.0):
+         * - Added Bilingual Support (zh-CN / en-US).
+         * - Language toggle in overlay.
+         */
+
+        // --- 多语言配置 ---
+        const I18N = {
+            'zh-CN': {
+                title: "流 光",
+                subtitle: "Deep Connection",
+                loading: "正在链接视觉神经...",
+                btnStart: "起 飞",
+                introTitle: "放松双肩 · 深呼吸",
+                intro1: "请以鼻尖为笔，轻抚微风",
+                intro2: "大幅度缓慢摆动头部",
+                intro3: "感受颈部每一次温柔的舒展",
+                hudStatus: "旅 程",
+                hudScore: "光 辉",
+                breathIn: "吸 气",
+                breathOut: "呼 气",
+                restTitle: "身心重置",
+                restSubtitle: "准备再次起飞",
+                btnRest: "再次起飞",
+                narrativeStart: "旅程开始",
+                narrativeHaloOn: "光环展开",
+                narrativeHaloOff: "光环消散",
+                narrativeConnect: "连结达成"
+            },
+            'en-US': {
+                title: "FLOWING LIGHT",
+                subtitle: "Deep Connection",
+                loading: "Linking Visual Nerves...",
+                btnStart: "TAKE FLIGHT",
+                introTitle: "Relax Shoulders · Breathe Deep",
+                intro1: "Paint the wind with your nose",
+                intro2: "Sway your head slowly and widely",
+                intro3: "Feel the gentle stretch in your neck",
+                hudStatus: "JOURNEY",
+                hudScore: "LUMENS",
+                breathIn: "Inhale",
+                breathOut: "Exhale",
+                restTitle: "Rest & Reset",
+                restSubtitle: "Ready to fly again",
+                btnRest: "FLY AGAIN",
+                narrativeStart: "Journey Begins",
+                narrativeHaloOn: "Halo Unfolds",
+                narrativeHaloOff: "Halo Fades",
+                narrativeConnect: "Connection Made"
+            }
+        };
+
+        const CONFIG = {
+            smoothing: 0.12,
+            sensitivity: 2.5,
+            roundTime: 90,
+            restTime: 12,
+            initialSpeed: 1.5,   
+            maxSpeedAdd: 4.0,
+            magnetBaseRadius: 110,
+            magnetBuffRadius: 150,
+            buffDuration: 8000,
+            buffCooldown: 15000,
+        };
+
+        const THEMES = {
+            gold:   { color: '#fbbf24', shadow: '#f59e0b' },
+            cyan:   { color: '#22d3ee', shadow: '#06b6d4' },
+            purple: { color: '#e879f9', shadow: '#c026d3' },
+            crimson:{ color: '#f43f5e', shadow: '#e11d48' },
+            white:  { color: '#ffffff', shadow: '#e2e8f0' }
+        };
+
+        const state = {
+            lang: 'zh-CN', // 默认语言
+            phase: 'loading',
+            startTime: 0,
+            energy: 0,
+            nose: { x: 0.5, y: 0.5 },
+            player: { x: window.innerWidth/2, y: window.innerHeight/2, angle: 0, color: THEMES.gold },
+            magnetBuffEnd: 0, 
+            lastBuffTime: 0,
+            orbs: [], travelers: [], stardust: [], particles: [], stars: [],           
+            lastOrbSpawn: 0, lastTravelerSpawn: 0, lastStardustSpawn: 0
+        };
+
+        const els = {
+            video: document.getElementById('input-video'),
+            player: document.getElementById('player'),
+            playerHalo: document.getElementById('player-halo'),
+            planeSvg: document.querySelector('.plane-svg'),
+            world: document.getElementById('game-world'),
+            hud: document.getElementById('hud'),
+            hudStatus: document.getElementById('status-text'),
+            hudScore: document.getElementById('score-text'),
+            progressFill: document.getElementById('progress-fill'),
+            overlay: document.getElementById('overlay-layer'),
+            overlayTitle: document.getElementById('overlay-title'),
+            overlaySubtitle: document.getElementById('overlay-subtitle'),
+            introGuide: document.getElementById('intro-guide'),
+            introTitle: document.getElementById('intro-title'),
+            intro1: document.getElementById('intro-1'),
+            intro2: document.getElementById('intro-2'),
+            intro3: document.getElementById('intro-3'),
+            loading: document.getElementById('loading-text'),
+            startBtn: document.getElementById('start-btn'),
+            breathGuide: document.getElementById('breath-guide'),
+            breathWord: document.getElementById('breath-word'),
+            narrativeText: document.getElementById('narrative-text'),
+            langBtn: document.getElementById('lang-btn'),
+            canvasTrail: document.getElementById('trail-canvas'),
+            canvasBg: document.getElementById('bg-canvas'),
+            canvasParticles: document.getElementById('particle-canvas')
+        };
+        
+        const ctxTrail = els.canvasTrail.getContext('2d');
+        const ctxBg = els.canvasBg.getContext('2d');
+        const ctxParticles = els.canvasParticles.getContext('2d');
+        let audioCtx;
+
+        // --- 语言控制 ---
+        function toggleLanguage() {
+            state.lang = state.lang === 'zh-CN' ? 'en-US' : 'zh-CN';
+            updateUIText();
+        }
+
+        function getText(key) {
+            return I18N[state.lang][key] || key;
+        }
+
+        function updateUIText() {
+            // Overlay
+            els.langBtn.textContent = state.lang === 'zh-CN' ? "EN / 中" : "中 / EN";
+            
+            if (state.phase === 'resting') {
+                els.overlayTitle.textContent = getText('restTitle');
+                els.overlaySubtitle.textContent = getText('restSubtitle');
+                els.startBtn.textContent = getText('btnRest');
+            } else {
+                els.overlayTitle.textContent = getText('title');
+                els.overlaySubtitle.textContent = getText('subtitle');
+                els.startBtn.textContent = getText('btnStart');
+                els.loading.textContent = getText('loading');
+            }
+            
+            // Intro
+            els.introTitle.textContent = getText('introTitle');
+            els.intro1.textContent = getText('intro1');
+            els.intro2.textContent = getText('intro2');
+            els.intro3.textContent = getText('intro3');
+
+            // HUD
+            els.hudStatus.textContent = getText('hudStatus');
+            updateHUD(); // Refresh score label
+        }
+
+        // --- 初始化 ---
+        function resizeCanvases() {
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            [els.canvasTrail, els.canvasBg, els.canvasParticles].forEach(c => { c.width = w; c.height = h; });
+            initStars();
+        }
+
+        function initStars() {
+            state.stars = [];
+            for (let i = 0; i < 150; i++) {
+                state.stars.push({
+                    x: Math.random() * window.innerWidth,
+                    y: Math.random() * window.innerHeight,
+                    size: Math.random() * 2,
+                    speed: Math.random() * 0.5 + 0.5,
+                    alpha: Math.random() * 0.5 + 0.1
+                });
+            }
+        }
+
+        function loadScript(src) {
+            return new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                script.src = src; script.onload = resolve; script.onerror = reject;
+                document.head.appendChild(script);
+            });
+        }
+
+        async function initApp() {
+            resizeCanvases();
+            window.addEventListener('resize', resizeCanvases);
+            els.langBtn.addEventListener('click', toggleLanguage);
+            updateUIText(); // Apply initial text
+
+            try {
+                await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js');
+                await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js');
+                els.loading.classList.add('hidden');
+                els.startBtn.classList.remove('hidden');
+                els.introGuide.classList.remove('opacity-0');
+                state.phase = 'ready';
+                els.startBtn.addEventListener('click', startSession);
+            } catch (error) { els.loading.textContent = "Error loading components"; }
+        }
+
+        // --- 游戏流程 ---
+
+        async function startSession() {
+            if (!audioCtx) initAudio();
+            if (state.phase === 'ready') {
+                els.introGuide.classList.add('hidden'); 
+                els.loading.classList.remove('hidden'); 
+                els.loading.textContent = getText('loading'); 
+                els.startBtn.classList.add('hidden');
+                await initCamera(); 
+            }
+            
+            document.body.classList.add('game-active');
+            resetGame();
+            els.overlay.classList.add('fade-out');
+            els.hud.classList.remove('hidden');
+            state.phase = 'playing';
+            setTimeout(() => showNarrative(getText('narrativeStart'), 3000), 1000);
+        }
+
+        function resetGame() {
+            state.startTime = Date.now();
+            state.energy = 0;
+            state.magnetBuffEnd = 0;
+            state.lastBuffTime = 0;
+            updatePlayerTheme(THEMES.gold); 
+            
+            state.orbs.forEach(o => o.el.remove()); state.orbs = [];
+            state.travelers.forEach(t => t.el.remove()); state.travelers = [];
+            state.stardust = [];
+            
+            els.player.classList.remove('halo-active');
+            updateHUD(); 
+        }
+
+        function endGame() {
+            state.phase = 'resting';
+            document.body.classList.remove('game-active');
+
+            els.overlay.classList.remove('fade-out');
+            els.hud.classList.add('hidden');
+            
+            // Update overlay for rest mode
+            updateUIText();
+            
+            els.introGuide.classList.add('hidden'); 
+            els.startBtn.classList.add('hidden');
+            els.breathGuide.style.display = 'flex';
+            
+            const breathCycle = setInterval(() => {
+                if (state.phase !== 'resting') { clearInterval(breathCycle); return; }
+                const time = (Date.now() / 1000) % 6; 
+                // Dynamically update breath text based on current language
+                if (time < 3) els.breathWord.textContent = getText('breathIn'); 
+                else els.breathWord.textContent = getText('breathOut');
+            }, 100);
+
+            setTimeout(() => finishRest(), CONFIG.restTime * 1000);
+        }
+
+        function finishRest() {
+            els.breathGuide.style.display = 'none';
+            // Update UI will handle text for button and title
+            updateUIText();
+            els.startBtn.classList.remove('hidden');
+        }
+
+        async function initCamera() {
+            const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
+            faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+            faceMesh.onResults(results => {
+                if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+                    const nose = results.multiFaceLandmarks[0][4];
+                    state.nose.x = 1 - nose.x; state.nose.y = nose.y; 
+                }
+            });
+            const camera = new Camera(els.video, { onFrame: async () => await faceMesh.send({image: els.video}), width: 640, height: 480 });
+            await camera.start();
+            requestAnimationFrame(gameLoop);
+        }
+
+        function gameLoop(timestamp) {
+            if (state.phase === 'playing') {
+                updateGameLogic(timestamp);
+                renderVisuals();
+            }
+            requestAnimationFrame(gameLoop);
+        }
+
+        function updateGameLogic(timestamp) {
+            const now = Date.now();
+            const timeElapsed = now - state.startTime;
+            
+            const progress = Math.min(100, (timeElapsed / (CONFIG.roundTime * 1000)) * 100);
+            els.progressFill.style.width = `${progress}%`;
+            
+            if (timeElapsed > CONFIG.roundTime * 1000) { endGame(); return; }
+
+            // 1. Player Move
+            let targetX = (state.nose.x - 0.5) * CONFIG.sensitivity * window.innerWidth + window.innerWidth / 2;
+            let targetY = (state.nose.y - 0.5) * CONFIG.sensitivity * window.innerHeight + window.innerHeight / 2;
+            targetX = Math.max(0, Math.min(window.innerWidth, targetX));
+            targetY = Math.max(0, Math.min(window.innerHeight, targetY));
+
+            state.player.x = lerp(state.player.x, targetX, CONFIG.smoothing);
+            state.player.y = lerp(state.player.y, targetY, CONFIG.smoothing);
+            const dx = state.player.x - (state.player.prevX || state.player.x);
+            state.player.prevX = state.player.x;
+            
+            state.player.angle = lerp(state.player.angle, dx * 3.5, 0.1);
+
+            els.player.style.left = `${state.player.x}px`;
+            els.player.style.top = `${state.player.y}px`;
+            els.player.style.transform = `translate(-50%, -50%) rotate(${state.player.angle}deg)`;
+
+            // 2. Buff Logic
+            let currentBuffRadius = CONFIG.magnetBaseRadius;
+            if (state.magnetBuffEnd > now) {
+                const remainingRatio = (state.magnetBuffEnd - now) / CONFIG.buffDuration;
+                const visualSize = CONFIG.magnetBuffRadius * 2 * remainingRatio;
+                els.playerHalo.style.width = `${visualSize}px`;
+                els.playerHalo.style.height = `${visualSize}px`;
+                currentBuffRadius = Math.max(CONFIG.magnetBaseRadius, CONFIG.magnetBuffRadius * remainingRatio);
+            } else if (state.magnetBuffEnd !== 0) {
+                state.magnetBuffEnd = 0;
+                state.lastBuffTime = now;
+                els.player.classList.remove('halo-active');
+                els.playerHalo.style.width = '0px';
+                els.playerHalo.style.height = '0px';
+                showNarrative(getText('narrativeHaloOff'), 1500);
+            }
+
+            // 3. Spawning
+            if (timestamp - state.lastOrbSpawn > 1000) { spawnOrb(timestamp); state.lastOrbSpawn = timestamp; }
+            if (timestamp - state.lastTravelerSpawn > 15000) { spawnTraveler(); state.lastTravelerSpawn = timestamp; }
+            if (timestamp - state.lastStardustSpawn > 120) { spawnStardust(); state.lastStardustSpawn = timestamp; }
+
+            updateEntities(timeElapsed, currentBuffRadius);
+            updateParticles();
+            checkCollisions();
+        }
+
+        function updateEntities(timeElapsed, currentMagnetRadius) {
+            const timeRatio = Math.min(1, timeElapsed / (CONFIG.roundTime * 1000));
+            const currentSpeed = CONFIG.initialSpeed + (timeRatio * CONFIG.maxSpeedAdd);
+
+            const applyGravity = (entity, isHeavy) => {
+                const dx = state.player.x - entity.x;
+                const dy = state.player.y - entity.y;
+                const dist = Math.hypot(dx, dy);
+
+                if (dist < currentMagnetRadius) {
+                    const normalizedDist = dist / currentMagnetRadius;
+                    const pullFactor = Math.pow(1 - normalizedDist, 2); 
+                    let strength = isHeavy ? 0.08 : 0.2; 
+                    entity.x += dx * pullFactor * strength;
+                    entity.y += dy * pullFactor * strength;
+                    if (entity.el) {
+                        const scale = 1 + (1 - normalizedDist) * 0.5;
+                        entity.el.style.transform = `translate(-50%, -50%) scale(${scale})`;
+                    }
+                }
+                return dist;
+            };
+
+            state.stars.forEach(star => {
+                star.y += currentSpeed * star.speed; 
+                if (star.y > window.innerHeight) { star.y = 0; star.x = Math.random() * window.innerWidth; }
+            });
+
+            state.orbs.forEach((orb, i) => {
+                orb.y += currentSpeed;
+                applyGravity(orb, true);
+                orb.el.style.top = `${orb.y}px`; orb.el.style.left = `${orb.x}px`;
+                if (orb.y > window.innerHeight + 50) removeEntity(state.orbs, i);
+            });
+
+            state.travelers.forEach((t, i) => {
+                t.life -= 16;
+                t.y += currentSpeed * 0.5;
+                applyGravity(t, true);
+                t.el.style.top = `${t.y}px`; t.el.style.left = `${t.x}px`;
+                if (t.life <= 0 || t.y > window.innerHeight+50) removeEntity(state.travelers, i);
+            });
+
+            for (let i = state.stardust.length - 1; i >= 0; i--) {
+                const s = state.stardust[i];
+                s.y += currentSpeed * 1.5;
+                const dx = state.player.x - s.x;
+                const dy = state.player.y - s.y;
+                const dist = Math.hypot(dx, dy);
+                if (dist < currentMagnetRadius) {
+                    const pull = (currentMagnetRadius > CONFIG.magnetBaseRadius) ? 0.3 : 0.15;
+                    s.x += dx * pull;
+                    s.y += dy * pull;
+                }
+                if (s.y > window.innerHeight) state.stardust.splice(i, 1);
+            }
+        }
+
+        function spawnOrb(time) {
+            const el = document.createElement('div');
+            els.world.appendChild(el);
+            
+            const rand = Math.random();
+            let type = 'gold';
+            let theme = THEMES.gold;
+            
+            const canSpawnBuff = (Date.now() - state.lastBuffTime > CONFIG.buffCooldown) && (state.magnetBuffEnd === 0);
+
+            if (canSpawnBuff && rand > 0.97) { 
+                type = 'buff'; theme = THEMES.white; el.className = 'orb orb-buff'; 
+            } else if (rand > 0.5) {
+                const colors = ['purple', 'cyan', 'crimson'];
+                type = colors[Math.floor(Math.random() * colors.length)];
+                theme = THEMES[type];
+                el.className = 'orb';
+                el.style.backgroundColor = theme.color;
+                el.style.boxShadow = `0 0 15px ${theme.shadow}`;
+            } else {
+                el.className = 'orb';
+                el.style.backgroundColor = THEMES.gold.color;
+                el.style.boxShadow = `0 0 15px ${THEMES.gold.shadow}`;
+            }
+
+            const centerX = window.innerWidth / 2;
+            const swing = window.innerWidth * 0.4;
+            const x = centerX + Math.sin(time / 2000) * swing;
+            state.orbs.push({ el, x, y: -50, type: type, theme: theme });
+        }
+
+        function updatePlayerTheme(theme) {
+            state.player.color = theme;
+            els.planeSvg.style.fill = theme.color;
+            els.planeSvg.style.filter = `drop-shadow(0 0 15px ${theme.shadow})`;
+            els.progressFill.style.background = "#fff"; 
+            els.progressFill.style.boxShadow = `0 0 10px ${theme.shadow}`;
+        }
+
+        function activateBuff() {
+            state.magnetBuffEnd = Date.now() + CONFIG.buffDuration;
+            els.player.classList.add('halo-active');
+            els.playerHalo.style.width = `${CONFIG.magnetBuffRadius * 2}px`;
+            els.playerHalo.style.height = `${CONFIG.magnetBuffRadius * 2}px`;
+            playTone('HighC', 'square', 0.5);
+            showNarrative(getText('narrativeHaloOn'), 2000);
+        }
+
+        function checkCollisions() {
+            const pRect = els.player.getBoundingClientRect();
+            const hitBox = { left: pRect.left+5, right: pRect.right-5, top: pRect.top+5, bottom: pRect.bottom-5 };
+
+            for (let i = state.orbs.length - 1; i >= 0; i--) {
+                const orb = state.orbs[i];
+                const rect = orb.el.getBoundingClientRect();
+                if (isHit(hitBox, rect)) {
+                    createExplosion(orb.x, orb.y, orb.theme.color, 12);
+                    removeEntity(state.orbs, i);
+                    addEnergy(20);
+                    if (orb.type === 'buff') activateBuff();
+                    else { updatePlayerTheme(orb.theme); playTone('C4'); }
+                }
+            }
+            
+            for (let i = state.stardust.length - 1; i >= 0; i--) {
+                const s = state.stardust[i];
+                const dx = state.player.x - s.x;
+                const dy = state.player.y - s.y;
+                if (Math.hypot(dx, dy) < 30) { state.stardust.splice(i, 1); addEnergy(1); }
+            }
+            
+            for (let i = state.travelers.length - 1; i >= 0; i--) {
+                const t = state.travelers[i];
+                if (isHit(hitBox, t.el.getBoundingClientRect())) {
+                    createExplosion(t.x, t.y, '#ffffff', 30);
+                    removeEntity(state.travelers, i);
+                    addEnergy(150);
+                    playTone('HighC', 'sine', 0.8);
+                    showNarrative(getText('narrativeConnect'), 2000);
+                }
+            }
+        }
+
+        // --- 渲染 ---
+        const trailPoints = [];
+        function renderVisuals() {
+            ctxBg.clearRect(0, 0, els.canvasBg.width, els.canvasBg.height);
+            ctxBg.fillStyle = "#fff";
+            state.stars.forEach(star => {
+                ctxBg.globalAlpha = star.alpha;
+                ctxBg.beginPath(); ctxBg.arc(star.x, star.y, star.size, 0, Math.PI * 2); ctxBg.fill();
+            });
+
+            ctxBg.fillStyle = state.player.color.color; 
+            state.stardust.forEach(s => {
+                ctxBg.globalAlpha = s.alpha * 0.6;
+                ctxBg.beginPath(); ctxBg.arc(s.x, s.y, s.size, 0, Math.PI * 2); ctxBg.fill();
+            });
+
+            ctxParticles.clearRect(0, 0, els.canvasParticles.width, els.canvasParticles.height);
+            state.particles.forEach(p => {
+                ctxParticles.globalAlpha = p.life;
+                ctxParticles.fillStyle = p.color;
+                ctxParticles.beginPath(); ctxParticles.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctxParticles.fill();
+            });
+
+            trailPoints.push({ x: state.player.x, y: state.player.y });
+            if (trailPoints.length > 35) trailPoints.shift();
+            
+            ctxTrail.clearRect(0, 0, els.canvasTrail.width, els.canvasTrail.height);
+            if (trailPoints.length < 2) return;
+
+            ctxTrail.beginPath();
+            ctxTrail.moveTo(trailPoints[0].x, trailPoints[0].y);
+            for (let i = 1; i < trailPoints.length - 1; i++) {
+                const xc = (trailPoints[i].x + trailPoints[i+1].x) / 2;
+                const yc = (trailPoints[i].y + trailPoints[i+1].y) / 2;
+                ctxTrail.quadraticCurveTo(trailPoints[i].x, trailPoints[i].y, xc, yc);
+            }
+            ctxTrail.lineTo(state.player.x, state.player.y);
+            
+            const grad = ctxTrail.createLinearGradient(trailPoints[0].x, trailPoints[0].y, state.player.x, state.player.y);
+            grad.addColorStop(0, 'rgba(255,255,255,0)');
+            grad.addColorStop(1, state.player.color.color); 
+            ctxTrail.strokeStyle = grad;
+            ctxTrail.lineWidth = state.magnetBuffEnd > Date.now() ? 14 : 8; 
+            ctxTrail.lineCap = 'round';
+            ctxTrail.stroke();
+        }
+
+        // --- 辅助 ---
+        function updateParticles() {
+            for (let i = state.particles.length - 1; i >= 0; i--) {
+                const p = state.particles[i]; p.x += p.vx; p.y += p.vy; p.life -= 0.02; p.size *= 0.95;
+                if (p.life <= 0) state.particles.splice(i, 1);
+            }
+        }
+        function createExplosion(x, y, color, count) {
+            for (let i = 0; i < count; i++) {
+                const a = Math.random() * 6.28; const v = Math.random() * 4 + 1;
+                state.particles.push({ x, y, vx: Math.cos(a)*v, vy: Math.sin(a)*v, life: 1.0, color, size: Math.random()*3+2 });
+            }
+        }
+        function spawnTraveler() {
+            const el = document.createElement('div'); el.className = 'traveler'; el.innerHTML = '<div class="traveler-core"></div>'; els.world.appendChild(el);
+            const x = Math.random() > 0.5 ? 100 : window.innerWidth - 100;
+            state.travelers.push({ el, x, y: 100, life: 10000 }); el.style.left = `${x}px`;
+        }
+        function spawnStardust() {
+            state.stardust.push({ x: Math.random() * window.innerWidth, y: -10, size: Math.random() * 3 + 1, alpha: Math.random() * 0.5 + 0.3 });
+        }
+        function removeEntity(arr, i) { if(arr[i]) { arr[i].el.remove(); arr.splice(i, 1); } }
+        function isHit(r1, r2) { return !(r2.left > r1.right || r2.right < r1.left || r2.top > r1.bottom || r2.bottom < r1.top); }
+        function addEnergy(a) { state.energy += a; updateHUD(); }
+        function updateHUD() { els.hudScore.textContent = `${getText('hudScore')}: ${Math.floor(state.energy)}`; }
+        function showNarrative(t, d) { els.narrativeText.textContent = t; els.narrativeText.classList.add('active'); setTimeout(()=>els.narrativeText.classList.remove('active'), d); }
+        function lerp(a, b, t) { return a + (b - a) * t; }
+        
+        function initAudio() {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const osc = audioCtx.createOscillator(); const g = audioCtx.createGain(); const f = audioCtx.createBiquadFilter();
+            osc.frequency.value = 55; osc.type = 'triangle'; f.type = 'lowpass'; f.frequency.value = 200; g.gain.value = 0.1;
+            osc.connect(f).connect(g).connect(audioCtx.destination); osc.start();
+        }
+        function playTone(n, t='sine', d=0.3) {
+            if(!audioCtx) return;
+            const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+            const f = { 'C4': 261.6, 'E4': 329.6, 'G4': 392.0, 'HighC': 523.25 };
+            o.frequency.value = f[n] || 440; o.type = t;
+            g.gain.setValueAtTime(0, audioCtx.currentTime); g.gain.linearRampToValueAtTime(0.1, audioCtx.currentTime + 0.05); g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + d);
+            o.connect(g).connect(audioCtx.destination); o.start(); o.stop(audioCtx.currentTime + d);
+        }
+
+        initApp();
+    </script>
+</body>
+</html>
