@@ -103,3 +103,15 @@
 📝 致谢与灵感
 
 设计灵感来源于 陈星汉 (Jenova Chen) 的作品《Flower》与《Journey》。
+
+📬 联系方式 (Contact)
+
+如果您有任何建议、反馈或想分享您的体验，欢迎联系：
+📧 Email: ycsy520@gmail.com
+
+© 版权申明 (Copyright)
+
+Copyright © 2024 Flowing Light. All Rights Reserved.
+本项目代码开源，仅供学习与个人使用。未经允许，禁止用于商业盈利目的。
+
+Made with ❤️ for a relaxed neck.
